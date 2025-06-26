@@ -2,23 +2,7 @@ const std = @import("std");
 const net = std.net;
 const posix = std.posix;
 
-const YearnServer = struct {
-    fd: posix.socket_t,
-
-    pub fn init() !YearnServer {
-        const addr = net.Address.initIp4([4]u8{ 127, 0, 0, 1}, 6379);
-        const fd = try posix.socket(addr.any.family, posix.SOCK.STREAM, posix.IPPROTO.TCP);
-        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-        try posix.bind(fd, &addr.any, net.Address.getOsSockLen(addr));
-        try posix.listen(fd, 128);
-
-        return .{ .fd = fd };
-    }
-
-    pub fn deinit(self: *YearnServer) void {
-        posix.close(self.fd);
-    }
-};
+const YearnServer = @import("server.zig");
 
 pub fn main() !u8 {
     std.debug.print("It's time to yearn\n", .{});
