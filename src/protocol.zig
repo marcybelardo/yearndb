@@ -25,21 +25,21 @@ const ProtocolError = error{
     SyntaxError,
 };
 
-fn parse(buf: []const u8, elems: std.ArrayList(Msg)) ProtocolError!void {
+fn parse(buf: []const u8, elems: *std.ArrayList(Msg)) !void {
     for (buf) |c| {
         switch (c) {
             '+' => {
                 step(buf);
-                elems.append(Msg{ .simple = try readLine(buf) });
+                try elems.append(Msg{ .simple = try readLine(buf) });
             },
             '-' => {
                 step(buf);
-                elems.append(Msg{ .err = try readLine(buf) });
+                try elems.append(Msg{ .err = try readLine(buf) });
             },
             ':' => {
                 step(buf);
                 const n = try fmt.parseInt(i64, try readLine(buf), 10);
-                elems.append(Msg{ .int = n });
+                try elems.append(Msg{ .int = n });
             },
             '$' => {
                 step(buf);
@@ -47,7 +47,7 @@ fn parse(buf: []const u8, elems: std.ArrayList(Msg)) ProtocolError!void {
                 const crlf_idx = std.mem.indexOf(u8, buf, "\r\n")
                     orelse return ProtocolError.SyntaxError;
                 const start_pos = crlf_idx + 2;
-                elems.append(Msg{ .bulk = buf[start_pos..len] });
+                try elems.append(Msg{ .bulk = buf[start_pos..len] });
             },
             '*' => {
                 step(buf);
@@ -56,8 +56,8 @@ fn parse(buf: []const u8, elems: std.ArrayList(Msg)) ProtocolError!void {
                     orelse return ProtocolError.SyntaxError;
                 const start_pos = crlf_idx + 2;
 
-                for (elem_num) |_| {
-                    elems.append(try parse(buf[start_pos..]));
+                for (0..elem_num) |_| {
+                    try parse(buf[start_pos..], elems);
                 }
             },
             else => return ProtocolError.SyntaxError,
@@ -80,14 +80,12 @@ fn step(buf: []const u8) void {
     buf += 1;
 }
 
-test "gets a line" {
-    const ping: []const u8 = "PING\r\n";
-    try expect(std.mem.eql(u8, readLine(ping), "PING"));
-}
-
 test "simple string" {
-    const message: []const u8 = "+PING\r\n";
-    try expect(std.mem.eql(Msg, parse(message), Msg{ .simple = "PING" }));
+    const ping: []const u8 = "+PING\r\n";
+    var elems = std.ArrayList(Msg).init(test_allocator);
+    const tokens = try parse(ping, &elems);
+    try expect(tokens[0], Msg{ .simple = "PING" });
 }
 
 const expect = std.testing.expect;
+const test_allocator = std.testing.allocator;
