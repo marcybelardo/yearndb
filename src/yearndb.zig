@@ -24,13 +24,21 @@ pub fn main() !u8 {
 
         std.debug.print("{} connected\n", .{client_addr});
 
-        const greeting = "Hi! Time to yearn!\n";
-        const written = posix.write(client, greeting) catch |err| {
+        var read_buf: [4096]u8 = undefined;
+
+        const read = posix.read(client, &read_buf) catch |err| {
+            std.debug.print("error reading from client: {}\n", .{err});
+            continue;
+        };
+
+        std.debug.print("{s}\n", .{read_buf});
+
+        const written = posix.write(client, "+PONG\r\n") catch |err| {
             std.debug.print("error writing to client: {}\n", .{err});
             continue;
         };
 
-        if (written == greeting.len) break;
+        if (read != 0 and written != 0) break;
     }
 
     return 0;
