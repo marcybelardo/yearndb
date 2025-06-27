@@ -12,7 +12,6 @@ const MsgType = enum {
     err,
     int,
     bulk,
-    arr,
 };
 
 const Msg = union(MsgType) {
@@ -20,45 +19,46 @@ const Msg = union(MsgType) {
     err: []const u8,
     int: i64,
     bulk: []const u8,
-    arr: []Msg,
 };
 
 const ProtocolError = error{
     SyntaxError,
 };
 
-fn parse(buf: []const u8) !Msg {
+fn parse(buf: []const u8, elems: std.ArrayList(Msg)) ProtocolError!void {
     for (buf) |c| {
         switch (c) {
             '+' => {
                 step(buf);
-                return Msg{ .simple = try readLine(buf) };
+                elems.append(Msg{ .simple = try readLine(buf) });
             },
             '-' => {
                 step(buf);
-                return Msg{ .err = try readLine(buf) };
+                elems.append(Msg{ .err = try readLine(buf) });
             },
             ':' => {
                 step(buf);
-                return Msg{ .int = fmt.parseInt(i64, try readLine(buf)) };
+                const n = try fmt.parseInt(i64, try readLine(buf), 10);
+                elems.append(Msg{ .int = n });
             },
             '$' => {
                 step(buf);
-                const len = fmt.parseInt(usize, try readLine(buf));
-                const start_pos = std.mem.indexOf(u8, buf, "\r\n") + 2;
-                return Msg{ .bulk = buf[start_pos..len] };
+                const len = try fmt.parseInt(usize, try readLine(buf), 10);
+                const crlf_idx = std.mem.indexOf(u8, buf, "\r\n")
+                    orelse return ProtocolError.SyntaxError;
+                const start_pos = crlf_idx + 2;
+                elems.append(Msg{ .bulk = buf[start_pos..len] });
             },
             '*' => {
                 step(buf);
-                const elems = fmt.parseInt(usize, try readLine(buf));
-                const start_pos = std.mem.indexOf(u8, buf, "\r\n") + 2;
-                var arr: [elems]Msg = undefined;
+                const elem_num = try fmt.parseInt(usize, try readLine(buf), 10);
+                const crlf_idx = std.mem.indexOf(u8, buf, "\r\n")
+                    orelse return ProtocolError.SyntaxError;
+                const start_pos = crlf_idx + 2;
 
-                for (elems) |e| {
-                    arr[e] = parse(buf[start_pos..]);
+                for (elem_num) |_| {
+                    elems.append(try parse(buf[start_pos..]));
                 }
-
-                return Msg{ .arr = arr };
             },
             else => return ProtocolError.SyntaxError,
         }
@@ -67,7 +67,7 @@ fn parse(buf: []const u8) !Msg {
 
 fn readLine(buf: []const u8) ![]const u8 {
     const delim: []const u8 = "\r\n";
-    const delim_pos = try std.mem.indexOf(u8, buf, delim);
+    const delim_pos = std.mem.indexOf(u8, buf, delim);
 
     if (delim_pos) |pos| {
         return buf[0..pos];
