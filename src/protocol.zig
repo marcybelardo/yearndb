@@ -20,7 +20,7 @@ const Msg = union(MsgType) {
     err: []const u8,
     int: i64,
     bulk: []const u8,
-    arr: []Msg,
+    arr: std.ArrayList(Msg),
 };
 
 const ProtocolError = error{
@@ -28,34 +28,40 @@ const ProtocolError = error{
     IncorrectNumberOfElements,
 };
 
-fn parse(buf: []const u8, elems: *std.ArrayList(Msg)) !void {
+fn parse(buf: []const u8, allocator: std.mem.Allocator) !Msg {
     switch (buf[0]) {
         '+' => {
-            try elems.append(Msg{ .simple = try readLine(buf[1..]) });
+            const str = try readLine(buf[1..]);
+            return Msg{ .simple = stripCRLF(str) };
         },
         '-' => {
-            try elems.append(Msg{ .err = try readLine(buf[1..]) });
+            const err = try readLine(buf[1..]);
+            return Msg{ .err = stripCRLF(err) };
         },
         ':' => {
-            const n = try fmt.parseInt(i64, try readLine(buf[1..]), 10);
-            try elems.append(Msg{ .int = n });
+            const n_str = try readLine(buf[1..]);
+            const n = try fmt.parseInt(i64, stripCRLF(n_str), 10);
+            return Msg{ .int = n };
         },
         '$' => {
             const len_str = try readLine(buf[1..]);
-            const len = try fmt.parseInt(usize, len_str, 10);
+            const len = try fmt.parseInt(usize, stripCRLF(len_str), 10);
             const start_pos = try findDataStart(buf);
-            try elems.append(Msg{ .bulk = buf[start_pos .. start_pos + len] });
+            return Msg{ .bulk = buf[start_pos .. start_pos + len] };
         },
         '*' => {
+            var elems = std.ArrayList(Msg).init(allocator);
             const elem_count_str = try readLine(buf[1..]);
-            const elem_count = try fmt.parseInt(usize, elem_count_str, 10);
+            const elem_count = try fmt.parseInt(usize, stripCRLF(elem_count_str), 10);
             var start_pos = try findDataStart(buf);
 
             for (0..elem_count) |_| {
                 const line = try readLine(buf[start_pos..]);
-                try parse(line, elems);
+                try elems.append(try parse(line, allocator));
                 start_pos += line.len;
             }
+
+            return Msg{ .arr = elems };
         },
         else => return ProtocolError.SyntaxError,
     }
@@ -66,7 +72,8 @@ fn readLine(buf: []const u8) ![]const u8 {
     const delim_pos = std.mem.indexOf(u8, buf, delim);
 
     if (delim_pos) |pos| {
-        return buf[0..pos];
+        // include CRLF in returned slice
+        return buf[0..pos + 2];
     } else {
         return ProtocolError.SyntaxError;
     }
@@ -83,13 +90,15 @@ fn findDataStart(buf: []const u8) !usize {
     }
 }
 
+fn stripCRLF(buf: []const u8) []const u8 {
+    return std.mem.trimRight(u8, buf, "\r\n");
+}
+
 test "simple string" {
     const ping: []const u8 = "+PING\r\n";
-    var elems = std.ArrayList(Msg).init(test_allocator);
-    defer elems.deinit();
-    try parse(ping, &elems);
+    const msg = try parse(ping, test_allocator);
 
-    switch (elems.items[0]) {
+    switch (msg) {
         .simple => |str| try expect(std.mem.eql(u8, str, "PING")),
         else => unreachable,
     }
@@ -97,11 +106,9 @@ test "simple string" {
 
 test "error message" {
     const err: []const u8 = "-ERR message\r\n";
-    var elems = std.ArrayList(Msg).init(test_allocator);
-    defer elems.deinit();
-    try parse(err, &elems);
+    const msg = try parse(err, test_allocator);
 
-    switch (elems.items[0]) {
+    switch (msg) {
         .err => |str| try expect(std.mem.eql(u8, str, "ERR message")),
         else => unreachable,
     }
@@ -109,11 +116,9 @@ test "error message" {
 
 test "integer" {
     const n: []const u8 = ":128\r\n";
-    var elems = std.ArrayList(Msg).init(test_allocator);
-    defer elems.deinit();
-    try parse(n, &elems);
+    const msg = try parse(n, test_allocator);
 
-    switch (elems.items[0]) {
+    switch (msg) {
         .int => |num| try expect(num == 128),
         else => unreachable,
     }
@@ -121,13 +126,10 @@ test "integer" {
 
 test "bulk string" {
     const bulk: []const u8 = "$20\r\nhello!\r\nhow are you?\r\n";
-    var elems = std.ArrayList(Msg).init(test_allocator);
-    defer elems.deinit();
-    try parse(bulk, &elems);
+    const msg = try parse(bulk, test_allocator);
 
-    switch (elems.items[0]) {
+    switch (msg) {
         .bulk => |str| {
-            std.debug.print("[{s}]\nLEN: {}\n", .{ str, str.len });
             try expect(std.mem.eql(u8, str, "hello!\r\nhow are you?"));
         },
         else => unreachable,
@@ -136,16 +138,20 @@ test "bulk string" {
 
 test "array message" {
     const arr: []const u8 = "*2\r\n+OK\r\n:10\r\n";
-    var elems = std.ArrayList(Msg).init(test_allocator);
-    defer elems.deinit();
-    try parse(arr, &elems);
+    const msg = try parse(arr, test_allocator);
 
-    for (elems.items) |item| {
-        switch (item) {
-            .simple => |str| try expect(std.mem.eql(u8, str, "OK")),
-            .int => |n| try expect(n == 10),
-            else => unreachable,
-        }
+    switch (msg) {
+        .arr => |a| {
+            defer a.deinit();
+            for (a.items) |item| {
+                switch (item) {
+                    .simple => |str| try expect(std.mem.eql(u8, str, "OK")),
+                    .int => |n| try expect(n == 10),
+                    else => unreachable,
+                }
+            }
+        },
+        else => unreachable,
     }
 }
 
