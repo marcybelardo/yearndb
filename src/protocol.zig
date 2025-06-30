@@ -50,7 +50,9 @@ fn parse(buf: []const u8, allocator: std.mem.Allocator) !Msg {
             return Msg{ .bulk = buf[start_pos .. start_pos + len] };
         },
         '*' => {
+            // IMPT! free this allocated memory in the function calling the parser
             var elems = std.ArrayList(Msg).init(allocator);
+
             const elem_count_str = try readLine(buf[1..]);
             const elem_count = try fmt.parseInt(usize, stripCRLF(elem_count_str), 10);
             var start_pos = try findDataStart(buf);
