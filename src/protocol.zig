@@ -12,6 +12,7 @@ const MsgType = enum {
     err,
     int,
     bulk,
+    arr,
 };
 
 const Msg = union(MsgType) {
@@ -19,10 +20,12 @@ const Msg = union(MsgType) {
     err: []const u8,
     int: i64,
     bulk: []const u8,
+    arr: []Msg,
 };
 
 const ProtocolError = error{
     SyntaxError,
+    IncorrectNumberOfElements,
 };
 
 fn parse(buf: []const u8, elems: *std.ArrayList(Msg)) !void {
@@ -38,17 +41,20 @@ fn parse(buf: []const u8, elems: *std.ArrayList(Msg)) !void {
             try elems.append(Msg{ .int = n });
         },
         '$' => {
-            const len = try fmt.parseInt(usize, try readLine(buf[1..]), 10);
+            const len_str = try readLine(buf[1..]);
+            const len = try fmt.parseInt(usize, len_str, 10);
             const start_pos = try findDataStart(buf);
-            try elems.append(Msg{ .bulk = buf[start_pos..len] });
+            try elems.append(Msg{ .bulk = buf[start_pos .. start_pos + len] });
         },
         '*' => {
-            const elem_num = try fmt.parseInt(usize, try readLine(buf[1..]), 10);
-            const start_pos = try findDataStart(buf);
+            const elem_count_str = try readLine(buf[1..]);
+            const elem_count = try fmt.parseInt(usize, elem_count_str, 10);
+            var start_pos = try findDataStart(buf);
 
-            for (0..elem_num) |_| {
+            for (0..elem_count) |_| {
                 const line = try readLine(buf[start_pos..]);
                 try parse(line, elems);
+                start_pos += line.len;
             }
         },
         else => return ProtocolError.SyntaxError,
@@ -121,21 +127,27 @@ test "bulk string" {
 
     switch (elems.items[0]) {
         .bulk => |str| {
-            std.debug.print("[{s}]\nLEN: {}\n", .{str, str.len});
+            std.debug.print("[{s}]\nLEN: {}\n", .{ str, str.len });
             try expect(std.mem.eql(u8, str, "hello!\r\nhow are you?"));
         },
         else => unreachable,
     }
 }
 
-// make an array type again
-// test "array message" {
-//     const arr: []const u8 = "*2\r\n+OK\r\n:10\r\n";
-//     var elems = std.ArrayList(Msg).init(test_allocator);
-//     defer elems.deinit();
-//     try parse(arr, &elems);
-//
-// }
+test "array message" {
+    const arr: []const u8 = "*2\r\n+OK\r\n:10\r\n";
+    var elems = std.ArrayList(Msg).init(test_allocator);
+    defer elems.deinit();
+    try parse(arr, &elems);
+
+    for (elems.items) |item| {
+        switch (item) {
+            .simple => |str| try expect(std.mem.eql(u8, str, "OK")),
+            .int => |n| try expect(n == 10),
+            else => unreachable,
+        }
+    }
+}
 
 const expect = std.testing.expect;
 const test_allocator = std.testing.allocator;
