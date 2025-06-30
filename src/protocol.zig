@@ -15,7 +15,7 @@ const MsgType = enum {
     arr,
 };
 
-const Msg = union(MsgType) {
+pub const Msg = union(MsgType) {
     simple: []const u8,
     err: []const u8,
     int: i64,
@@ -23,12 +23,12 @@ const Msg = union(MsgType) {
     arr: std.ArrayList(Msg),
 };
 
-const ProtocolError = error{
+pub const ProtocolError = error{
     SyntaxError,
     IncorrectNumberOfElements,
 };
 
-fn parse(buf: []const u8, allocator: std.mem.Allocator) !Msg {
+pub fn parse(buf: []const u8, allocator: std.mem.Allocator) !Msg {
     switch (buf[0]) {
         '+' => {
             const str = try readLine(buf[1..]);
@@ -43,6 +43,7 @@ fn parse(buf: []const u8, allocator: std.mem.Allocator) !Msg {
             const n = try fmt.parseInt(i64, stripCRLF(n_str), 10);
             return Msg{ .int = n };
         },
+        // *1\r\n$4\r\nPONG\r\n
         '$' => {
             const len_str = try readLine(buf[1..]);
             const len = try fmt.parseInt(usize, stripCRLF(len_str), 10);
@@ -75,7 +76,7 @@ fn readLine(buf: []const u8) ![]const u8 {
 
     if (delim_pos) |pos| {
         // include CRLF in returned slice
-        return buf[0..pos + 2];
+        return buf[0 .. pos + 2];
     } else {
         return ProtocolError.SyntaxError;
     }
@@ -155,6 +156,15 @@ test "array message" {
         },
         else => unreachable,
     }
+}
+
+test "two bulk strings" {
+    const arr: []const u8 = "*2\r\n$2\r\nHI\r\n$5\r\nHELLO\r\n";
+    const msg = try parse(arr, test_allocator);
+
+    try expect(@as(MsgType, msg) == MsgType.arr);
+    try expect(std.mem.eql(u8, msg.arr.items[0].bulk, "HI"));
+    try expect(std.mem.eql(u8, msg.arr.items[1].bulk, "HELLO"));
 }
 
 const expect = std.testing.expect;

@@ -3,6 +3,7 @@ const net = std.net;
 const posix = std.posix;
 
 const YearnServer = @import("server.zig");
+const YearnProtocol = @import("protocol.zig");
 
 pub fn main() !u8 {
     std.debug.print("It's time to yearn\n", .{});
@@ -33,7 +34,31 @@ pub fn main() !u8 {
 
         std.debug.print("{s}\n", .{read_buf});
 
-        const written = posix.write(client, "+PONG\r\n") catch |err| {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        const allocator = gpa.allocator();
+        defer _ = gpa.deinit();
+
+        const msg = try YearnProtocol.parse(&read_buf, allocator);
+        var reply: []const u8 = undefined;
+
+        switch (msg) {
+            .arr => |a| {
+                defer a.deinit();
+                for (a.items) |item| {
+                    switch (item) {
+                        .bulk => |b| {
+                            if (std.mem.eql(u8, b, "PING")) {
+                                reply = "+PONG\r\n";
+                            }
+                        },
+                        else => reply = "+UNKNOWN COMMAND\r\n",
+                    }
+                }
+            },
+            else => reply = "+TIME TO YEARN\r\n",
+        }
+
+        const written = posix.write(client, reply) catch |err| {
             std.debug.print("error writing to client: {}\n", .{err});
             continue;
         };
